@@ -133,8 +133,8 @@ mod monitoring {
         pub last_operation: u64,
         pub total_operations: u64,
         pub contract_version: String,
-    }
 
+    }
     // Data: Analytics
     #[contracttype]
     #[derive(Clone, Debug)]
