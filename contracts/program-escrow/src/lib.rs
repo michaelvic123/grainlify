@@ -6093,6 +6093,9 @@ pub fn preview_split(
         caller: Option<Address>,
         schedule_id: u64,
     ) {
+        // Acquire reentrancy guard before any state reads or external calls.
+        reentrancy_guard::acquire(&env);
+
         let mut schedules = Self::get_release_schedules(env.clone());
         let program_data = Self::get_program_info(env.clone());
 
@@ -6115,10 +6118,7 @@ pub fn preview_split(
                 // Per-window spending limit check before transfer
                 Self::enforce_spending_window(&env, &program_data.program_id, s.amount);
 
-                // Transfer funds
-                let token_client = token::Client::new(&env, &program_data.token_address);
-                token_client.transfer(&env.current_contract_address(), &s.recipient, &s.amount);
-
+                // Effects before interaction (CEI pattern): mark released before token transfer
                 s.released = true;
                 s.released_at = Some(now);
                 s.released_by = Some(caller.clone());
@@ -6133,9 +6133,10 @@ pub fn preview_split(
             panic!("Schedule not found");
         }
 
+        // Write updated schedule state before the external token call
         env.storage().instance().set(&SCHEDULES, &schedules);
 
-        // Write to release history
+        // Write to release history and update balance before external call
         if let Some(s) = released_schedule {
             let mut updated_program_data = program_data.clone();
             updated_program_data.remaining_balance -= s.amount;
@@ -6150,16 +6151,25 @@ pub fn preview_split(
                 .unwrap_or_else(|| Vec::new(&env));
             history.push_back(ProgramReleaseHistory {
                 schedule_id: s.schedule_id,
-                recipient: s.recipient,
+                recipient: s.recipient.clone(),
                 amount: s.amount,
                 released_at: now,
                 release_type: ReleaseType::Manual,
             });
             env.storage().instance().set(&RELEASE_HISTORY, &history);
+
+            // Interaction: token transfer after all state updates
+            let token_client = token::Client::new(&env, &program_data.token_address);
+            token_client.transfer(&env.current_contract_address(), &s.recipient, &s.amount);
         }
+
+        reentrancy_guard::release(&env);
     }
 
     pub fn release_prog_schedule_automatic(env: Env, schedule_id: u64) {
+        // Acquire reentrancy guard before any state reads or external calls.
+        reentrancy_guard::acquire(&env);
+
         let mut schedules = Self::get_release_schedules(env.clone());
         let program_data = Self::get_program_info(env.clone());
         let now = env.ledger().timestamp();
@@ -6179,10 +6189,7 @@ pub fn preview_split(
                 // Per-window spending limit check before transfer
                 Self::enforce_spending_window(&env, &program_data.program_id, s.amount);
 
-                // Transfer funds
-                let token_client = token::Client::new(&env, &program_data.token_address);
-                token_client.transfer(&env.current_contract_address(), &s.recipient, &s.amount);
-
+                // Effects before interaction (CEI pattern): mark released before token transfer
                 s.released = true;
                 s.released_at = Some(now);
                 s.released_by = Some(env.current_contract_address());
@@ -6197,9 +6204,10 @@ pub fn preview_split(
             panic!("Schedule not found");
         }
 
+        // Write updated schedule state before the external token call
         env.storage().instance().set(&SCHEDULES, &schedules);
 
-        // Write to release history
+        // Write to release history and update balance before external call
         if let Some(s) = released_schedule {
             let mut updated_program_data = program_data.clone();
             updated_program_data.remaining_balance -= s.amount;
@@ -6214,13 +6222,19 @@ pub fn preview_split(
                 .unwrap_or_else(|| Vec::new(&env));
             history.push_back(ProgramReleaseHistory {
                 schedule_id: s.schedule_id,
-                recipient: s.recipient,
+                recipient: s.recipient.clone(),
                 amount: s.amount,
                 released_at: now,
                 release_type: ReleaseType::Automatic,
             });
             env.storage().instance().set(&RELEASE_HISTORY, &history);
+
+            // Interaction: token transfer after all state updates
+            let token_client = token::Client::new(&env, &program_data.token_address);
+            token_client.transfer(&env.current_contract_address(), &s.recipient, &s.amount);
         }
+
+        reentrancy_guard::release(&env);
     }
 
     /// Reserve funds for a recipient-controlled claim.
